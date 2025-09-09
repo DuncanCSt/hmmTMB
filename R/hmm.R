@@ -10,6 +10,7 @@
 #' @importFrom ggplot2 ggplot aes theme_light geom_line theme scale_colour_manual
 #' facet_wrap label_bquote xlab ylab ggtitle element_blank element_text geom_point
 #' geom_ribbon scale_size_manual geom_histogram geom_vline geom_errorbar after_stat
+#' coord_cartesian
 #' @importFrom TMB MakeADFun sdreport
 #' @importFrom stringr str_trim str_split str_split_fixed
 #' @importFrom stats nlminb
@@ -732,12 +733,18 @@ HMM <- R6Class(
         stop("You need to install the package tmbstan to do this")
       }
       
+      if(!is.null(args$laplace)) {
+        if(args$laplace) {
+          stop("'laplace = TRUE' not currently working in fit_stan()")
+        }
+      }
+      
       # Setup if necessary
       if(is.null(private$tmb_obj_)) {
         self$setup(silent = silent)
       }
       
-      # Run Stan iterations 
+      # Run Stan iterations
       private$out_stan_ <- tmbstan(obj = private$tmb_obj_, init = "par", ...)
       post <- as.matrix(private$out_stan_)
       # Remove "lp__" column
@@ -846,14 +853,14 @@ HMM <- R6Class(
       } else {
         args$control <- list(eval.max = 1e4, iter.max = 1e4)
       }
-
+      
       # Fit model
       args <- c(private$tmb_obj_, args)
       systime <- system.time(
         private$out_ <- nlminb(start = args$par, 
-                             objective = args$fn,
-                             gradient = args$gr, 
-                             control = args$control)
+                               objective = args$fn,
+                               gradient = args$gr, 
+                               control = args$control)
       )
       private$out_$systime <- systime
       
@@ -1421,7 +1428,7 @@ HMM <- R6Class(
                             t = t,
                             level = level,
                             return_post = return_post)
-
+        
         # Replace posterior mean from post_fn() by MLE        
         val$mean <- fn(linpred = self[[comp]]()$linpred(), t = t)
         names(val)[which(names(val) == "mean")] <- "mle"
