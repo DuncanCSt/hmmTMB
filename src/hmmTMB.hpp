@@ -219,7 +219,13 @@
    if (use_hs_obs && log_hs_local_obs.size() != hs_obs_count) {
      error("Number of horseshoe local parameters (obs) does not match active coefficients");
    }
+   if (use_hs_obs && hs_obs_scale.size() != 1) {
+     error("Horseshoe global scale (obs) must be a single positive value");
+   }
    Type hs_obs_scale_val = (hs_obs_scale.size() > 0) ? hs_obs_scale(0) : Type(1.0);
+   if (use_hs_obs && !(hs_obs_scale_val > Type(0.0))) {
+     error("Horseshoe global scale (obs) must be positive");
+   }
    Type tau_obs = Type(1.0);
    if (use_hs_obs) {
      if (log_hs_global_obs.size() != 1) {
@@ -258,7 +264,13 @@
    if (use_hs_hid && log_hs_local_hid.size() != hs_hid_count) {
      error("Number of horseshoe local parameters (hid) does not match active coefficients");
    }
+   if (use_hs_hid && hs_hid_scale.size() != 1) {
+     error("Horseshoe global scale (hid) must be a single positive value");
+   }
    Type hs_hid_scale_val = (hs_hid_scale.size() > 0) ? hs_hid_scale(0) : Type(1.0);
+   if (use_hs_hid && !(hs_hid_scale_val > Type(0.0))) {
+     error("Horseshoe global scale (hid) must be positive");
+   }
    Type tau_hid = Type(1.0);
    if (use_hs_hid) {
      if (log_hs_global_hid.size() != 1) {

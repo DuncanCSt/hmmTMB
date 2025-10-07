@@ -482,6 +482,13 @@ HMM <- R6Class(
         if (is.null(entry)) {
           return(refresh_state(state))
         }
+        if (is.character(entry)) {
+          if (!all(entry %in% names(state$active))) {
+            stop("Horseshoe indicator names must match coefficient names")
+          }
+          state$active[] <- names(state$active) %in% entry
+          return(refresh_state(state))
+        }
         if (is.logical(entry) || is.numeric(entry)) {
           if (length(entry) != length(state$active)) {
             stop("Horseshoe indicator has incorrect length")
@@ -493,10 +500,17 @@ HMM <- R6Class(
           stop("Horseshoe configuration must be logical, numeric, or list")
         }
         if (!is.null(entry$active)) {
-          if (length(entry$active) != length(state$active)) {
-            stop("Horseshoe indicator has incorrect length")
+          if (is.character(entry$active)) {
+            if (!all(entry$active %in% names(state$active))) {
+              stop("Horseshoe indicator names must match coefficient names")
+            }
+            state$active[] <- names(state$active) %in% entry$active
+          } else {
+            if (length(entry$active) != length(state$active)) {
+              stop("Horseshoe indicator has incorrect length")
+            }
+            state$active[] <- as.logical(entry$active)
           }
-          state$active[] <- as.logical(entry$active)
         }
         if (!is.null(entry$global_scale)) {
           if (length(entry$global_scale) != 1) {
@@ -809,7 +823,17 @@ HMM <- R6Class(
       # are estimated and which are not (used e.g. in post_coeff)
       fixpar <- c(self$hid()$fixpar(all = TRUE), self$obs()$fixpar(all = TRUE))
       par_list <- self$coeff_list()
-      usernms <- c("obs", NA, NA, "lambda_obs", "hid", NA, NA, "lambda_hid", "delta0", NA, NA)
+      usernms <- c("obs",
+                   NA_character_,
+                   NA_character_,
+                   "lambda_obs",
+                   "hid",
+                   NA_character_,
+                   NA_character_,
+                   "lambda_hid",
+                   "delta0",
+                   NA_character_,
+                   NA_character_)
       par_names <- names(par_list)
       fixpar_vec <- NULL
       # Loop over model components
@@ -820,8 +844,12 @@ HMM <- R6Class(
         # Map vector for TMB
         tmp <- seq_along(v) 
         # Check if user-specified constraint
-        fixed <- fixpar[[usernms[i]]]
-        mode(fixed) <- "integer"
+        user_key <- usernms[i]
+        fixed <- NULL
+        if (!is.na(user_key) && user_key %in% names(fixpar)) {
+          fixed <- fixpar[[user_key]]
+          mode(fixed) <- "integer"
+        }
         if (length(fixed) > 0) {
           # Increase fixed to make sure it's not between 1:length(v)
           fixed <- fixed + length(v)
