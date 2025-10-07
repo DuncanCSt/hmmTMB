@@ -37,14 +37,22 @@
    DATA_IVECTOR(ref_tpm); // indices of reference transition probabilities
    // prior information 
    DATA_MATRIX(coeff_fe_obs_prior); // means, sds for prior on fixed effects for obs 
-   DATA_MATRIX(coeff_fe_hid_prior); // means, sds for prior on fixed effects for hidden 
-   DATA_MATRIX(log_lambda_obs_prior); // means, sds for prior on smoothing parameters for obs 
-   DATA_MATRIX(log_lambda_hid_prior); // means, sds for prior on smoothing parameters for hidden 
-   
+   DATA_MATRIX(coeff_fe_hid_prior); // means, sds for prior on fixed effects for hidden
+   DATA_MATRIX(log_lambda_obs_prior); // means, sds for prior on smoothing parameters for obs
+   DATA_MATRIX(log_lambda_hid_prior); // means, sds for prior on smoothing parameters for hidden
+   DATA_IVECTOR(hs_obs_active); // indicator for horseshoe shrinkage on obs fixed effects
+   DATA_IVECTOR(hs_hid_active); // indicator for horseshoe shrinkage on hidden fixed effects
+   DATA_VECTOR(hs_obs_scale); // half-Cauchy scale for global horseshoe parameter (obs)
+   DATA_VECTOR(hs_hid_scale); // half-Cauchy scale for global horseshoe parameter (hid)
+
    // PARAMETERS (fixed effects first, then random effects)
    PARAMETER_VECTOR(coeff_fe_obs); // observation parameters (fixed effects)
+   PARAMETER_VECTOR(log_hs_global_obs); // global horseshoe parameter for obs fixed effects
+   PARAMETER_VECTOR(log_hs_local_obs); // local horseshoe parameters for obs fixed effects
    PARAMETER_VECTOR(log_lambda_obs); // smoothness parameters
    PARAMETER_VECTOR(coeff_fe_hid); // state process parameters (fixed effects)
+   PARAMETER_VECTOR(log_hs_global_hid); // global horseshoe parameter for hidden fixed effects
+   PARAMETER_VECTOR(log_hs_local_hid); // local horseshoe parameters for hidden fixed effects
    PARAMETER_VECTOR(log_lambda_hid); // smoothness parameters
    PARAMETER_VECTOR(log_delta0); // initial distribution
    PARAMETER_VECTOR(coeff_re_obs); // observation parameters (random effects)
@@ -192,17 +200,89 @@
    //======================//
    // Priors               //
    //======================//
-   Type llk = 0; 
-   // fixed effects for observation 
-   for (int i = 0; i < coeff_fe_obs.size(); ++i) {
-     if (!R_IsNA(asDouble(coeff_fe_obs_prior(i, 0)))) {
-       llk += dnorm(coeff_fe_obs(i), coeff_fe_obs_prior(i, 0), coeff_fe_obs_prior(i, 1), 1.0); 
+   Type llk = 0;
+   if ((hs_obs_active.size() > 0) && (hs_obs_active.size() != coeff_fe_obs.size())) {
+     error("hs_obs_active length must match coeff_fe_obs length");
+   }
+   if ((hs_hid_active.size() > 0) && (hs_hid_active.size() != coeff_fe_hid.size())) {
+     error("hs_hid_active length must match coeff_fe_hid length");
+   }
+
+   // fixed effects for observation with optional horseshoe prior
+   int hs_obs_count = 0;
+   for (int i = 0; i < hs_obs_active.size(); ++i) {
+     if (hs_obs_active(i) != 0) {
+       hs_obs_count++;
      }
    }
-   // fixed effects for hidden  
+   bool use_hs_obs = (hs_obs_count > 0);
+   if (use_hs_obs && log_hs_local_obs.size() != hs_obs_count) {
+     error("Number of horseshoe local parameters (obs) does not match active coefficients");
+   }
+   Type hs_obs_scale_val = (hs_obs_scale.size() > 0) ? hs_obs_scale(0) : Type(1.0);
+   Type tau_obs = Type(1.0);
+   if (use_hs_obs) {
+     if (log_hs_global_obs.size() != 1) {
+       error("Expected a single horseshoe global parameter for observation coefficients");
+     }
+     Type log_tau_obs = log_hs_global_obs(0);
+     tau_obs = exp(log_tau_obs);
+     Type scaled_tau = tau_obs / hs_obs_scale_val;
+     llk += log(Type(2.0) / M_PI) - log(hs_obs_scale_val) -
+       log(Type(1.0) + scaled_tau * scaled_tau) + log_tau_obs;
+   }
+   int hs_obs_index = 0;
+   for (int i = 0; i < coeff_fe_obs.size(); ++i) {
+     bool shrink_obs = use_hs_obs && (hs_obs_active(i) != 0);
+     if (shrink_obs) {
+       Type log_lambda = log_hs_local_obs(hs_obs_index);
+       Type lambda = exp(log_lambda);
+       llk += log(Type(2.0) / M_PI) - log(Type(1.0) + lambda * lambda) + log_lambda;
+       llk += dnorm(coeff_fe_obs(i), Type(0), tau_obs * lambda, 1.0);
+       hs_obs_index++;
+     } else {
+       if (!R_IsNA(asDouble(coeff_fe_obs_prior(i, 0)))) {
+         llk += dnorm(coeff_fe_obs(i), coeff_fe_obs_prior(i, 0), coeff_fe_obs_prior(i, 1), 1.0);
+       }
+     }
+   }
+
+   // fixed effects for hidden with optional horseshoe prior
+   int hs_hid_count = 0;
+   for (int i = 0; i < hs_hid_active.size(); ++i) {
+     if (hs_hid_active(i) != 0) {
+       hs_hid_count++;
+     }
+   }
+   bool use_hs_hid = (hs_hid_count > 0);
+   if (use_hs_hid && log_hs_local_hid.size() != hs_hid_count) {
+     error("Number of horseshoe local parameters (hid) does not match active coefficients");
+   }
+   Type hs_hid_scale_val = (hs_hid_scale.size() > 0) ? hs_hid_scale(0) : Type(1.0);
+   Type tau_hid = Type(1.0);
+   if (use_hs_hid) {
+     if (log_hs_global_hid.size() != 1) {
+       error("Expected a single horseshoe global parameter for hidden coefficients");
+     }
+     Type log_tau_hid = log_hs_global_hid(0);
+     tau_hid = exp(log_tau_hid);
+     Type scaled_tau_hid = tau_hid / hs_hid_scale_val;
+     llk += log(Type(2.0) / M_PI) - log(hs_hid_scale_val) -
+       log(Type(1.0) + scaled_tau_hid * scaled_tau_hid) + log_tau_hid;
+   }
+   int hs_hid_index = 0;
    for (int i = 0; i < coeff_fe_hid.size(); ++i) {
-     if (!R_IsNA(asDouble(coeff_fe_hid_prior(i, 0)))) {
-       llk += dnorm(coeff_fe_hid(i), coeff_fe_hid_prior(i, 0), coeff_fe_hid_prior(i, 1), 1.0); 
+     bool shrink_hid = use_hs_hid && (hs_hid_active(i) != 0);
+     if (shrink_hid) {
+       Type log_lambda = log_hs_local_hid(hs_hid_index);
+       Type lambda = exp(log_lambda);
+       llk += log(Type(2.0) / M_PI) - log(Type(1.0) + lambda * lambda) + log_lambda;
+       llk += dnorm(coeff_fe_hid(i), Type(0), tau_hid * lambda, 1.0);
+       hs_hid_index++;
+     } else {
+       if (!R_IsNA(asDouble(coeff_fe_hid_prior(i, 0)))) {
+         llk += dnorm(coeff_fe_hid(i), coeff_fe_hid_prior(i, 0), coeff_fe_hid_prior(i, 1), 1.0);
+       }
      }
    }
    // smoothing parameters for observation

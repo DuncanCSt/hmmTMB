@@ -218,12 +218,21 @@ HMM <- R6Class(
     #' and the transition probabilities, (transformed) initial
     #' probabilities, and smoothness parameters.
     coeff_list = function() {
+      hs <- private$horseshoe_
+      if (is.null(hs)) {
+        hs <- list(obs = list(log_global = numeric(0), log_local = numeric(0)),
+                   hid = list(log_global = numeric(0), log_local = numeric(0)))
+      }
       list(coeff_fe_obs = self$obs()$coeff_fe(),
-           log_lambda_obs = self$obs()$lambda(), 
-           coeff_fe_hid = self$hid()$coeff_fe(), 
-           log_lambda_hid = self$hid()$lambda(), 
-           log_delta0 = self$hid()$delta0(log = TRUE, as_matrix = FALSE), 
-           coeff_re_obs = self$obs()$coeff_re(), 
+           log_hs_global_obs = hs$obs$log_global,
+           log_hs_local_obs = hs$obs$log_local,
+           log_lambda_obs = self$obs()$lambda(),
+           coeff_fe_hid = self$hid()$coeff_fe(),
+           log_hs_global_hid = hs$hid$log_global,
+           log_hs_local_hid = hs$hid$log_local,
+           log_lambda_hid = self$hid()$lambda(),
+           log_delta0 = self$hid()$delta0(log = TRUE, as_matrix = FALSE),
+           coeff_re_obs = self$obs()$coeff_re(),
            coeff_re_hid = self$hid()$coeff_re())
     },
     
@@ -289,12 +298,33 @@ HMM <- R6Class(
       
       # Update transition probabilities
       self$hid()$update_coeff_fe(coeff_fe = par_list$coeff_fe_hid)
-      if(!is.null(self$hid()$terms()$ncol_re)) { 
+      if(!is.null(self$hid()$terms()$ncol_re)) {
         # Only update if there are random effects
         self$hid()$update_coeff_re(coeff_re = par_list$coeff_re_hid)
         self$hid()$update_lambda(exp(par_list$log_lambda_hid))
       }
-      
+
+      if (!is.null(private$horseshoe_)) {
+        hs <- private$horseshoe_
+        if (!is.null(hs$obs)) {
+          if (!is.null(par_list$log_hs_global_obs) && length(hs$obs$log_global) > 0) {
+            hs$obs$log_global[] <- par_list$log_hs_global_obs
+          }
+          if (!is.null(par_list$log_hs_local_obs) && length(hs$obs$log_local) > 0) {
+            hs$obs$log_local[] <- par_list$log_hs_local_obs
+          }
+        }
+        if (!is.null(hs$hid)) {
+          if (!is.null(par_list$log_hs_global_hid) && length(hs$hid$log_global) > 0) {
+            hs$hid$log_global[] <- par_list$log_hs_global_hid
+          }
+          if (!is.null(par_list$log_hs_local_hid) && length(hs$hid$log_local) > 0) {
+            hs$hid$log_local[] <- par_list$log_hs_local_hid
+          }
+        }
+        private$horseshoe_ <- hs
+      }
+
       # Update initial distribution delta0
       ID <- self$obs()$data()$ID
       n_ID <- length(unique(ID))
@@ -350,27 +380,31 @@ HMM <- R6Class(
       return(list(obspar = obspar, tpm = tpm))
     },
     
-    #' @description Set priors for coefficients 
-    #' 
-    #' @param new_priors is a named list of matrices with optional elements 
-    #' coeff_fe_obs, coeff_fe_hid, log_lambda_obs, andlog_lambda_hid.
-    #' Each matrix has two columns (first col = mean, second col = sd) 
-    #' specifying parameters for normal priors. 
+    #' @description Set priors for coefficients
+    #'
+    #' @param new_priors is a named list that can include matrices for normal
+    #' priors (`coeff_fe_obs`, `coeff_fe_hid`, `log_lambda_obs`,
+    #' `log_lambda_hid`) as well as an optional `horseshoe` entry to configure
+    #' global--local shrinkage for fixed effects during MCMC fitting. Matrices
+    #' must have two columns (first col = mean, second col = sd) specifying
+    #' parameters for normal priors. The horseshoe specification can flag which
+    #' coefficients use the hierarchy and set global scale hyperparameters.
     set_priors = function(new_priors = NULL) {
+      if (is.null(new_priors)) new_priors <- list()
       fe <- self$coeff_fe()
       if (!is.null(new_priors$coeff_fe_obs)) {
-        coeff_fe_obs_prior <- new_priors$coeff_fe_obs 
+        coeff_fe_obs_prior <- new_priors$coeff_fe_obs
       } else {
         coeff_fe_obs_prior <- matrix(NA, nr = length(fe$obs), nc = 2)
       }
       if (!is.null(new_priors$coeff_fe_hid)) {
-        coeff_fe_hid_prior <- new_priors$coeff_fe_hid 
+        coeff_fe_hid_prior <- new_priors$coeff_fe_hid
       } else {
         coeff_fe_hid_prior <- matrix(NA, nr = length(fe$hid), nc = 2)
       }
       lam <- self$lambda()
       if (!is.null(new_priors$log_lambda_obs)) {
-        log_lambda_obs_prior <- new_priors$log_lambda_obs 
+        log_lambda_obs_prior <- new_priors$log_lambda_obs
       } else {
         log_lambda_obs_prior <- matrix(NA, nr = length(lam$obs), nc = 2)
       }
@@ -379,7 +413,154 @@ HMM <- R6Class(
       } else {
         log_lambda_hid_prior <- matrix(NA, nr = length(lam$hid), nc = 2)
       }
-      
+
+      get_coef_names <- function(x) {
+        nms <- rownames(x)
+        if (is.null(nms)) nms <- names(x)
+        if (is.null(nms)) nms <- paste0("V", seq_len(length(x)))
+        nms
+      }
+
+      make_default_state <- function(names_vec, component) {
+        list(
+          active = setNames(rep(FALSE, length(names_vec)), names_vec),
+          active_index = integer(0),
+          global_scale = 1,
+          log_global = numeric(0),
+          log_local = numeric(0),
+          global_name = paste0("log_hs_global_", component),
+          local_name_prefix = paste0("log_hs_local_", component)
+        )
+      }
+
+      refresh_state <- function(state) {
+        prev_global <- state$log_global
+        prev_local <- state$log_local
+        idx <- which(state$active)
+        state$active_index <- idx
+        if (length(idx) > 0) {
+          global_value <- if (length(prev_global) > 0) prev_global[1] else log(state$global_scale)
+          state$log_global <- setNames(rep(global_value, 1), state$global_name)
+          local_names <- names(state$active)[idx]
+          local_values <- rep(0, length(local_names))
+          if (length(prev_local) > 0) {
+            if (!is.null(names(prev_local))) {
+              common <- intersect(local_names, names(prev_local))
+              if (length(common) > 0) {
+                local_values[match(common, local_names)] <- prev_local[common]
+              }
+            } else if (length(prev_local) == length(local_values)) {
+              local_values <- prev_local
+            }
+          }
+          names(local_values) <- local_names
+          state$log_local <- local_values
+        } else {
+          state$log_global <- numeric(0)
+          state$log_local <- numeric(0)
+        }
+        state
+      }
+
+      restore_state <- function(state, previous) {
+        if (is.null(previous)) {
+          return(refresh_state(state))
+        }
+        common <- intersect(names(state$active), names(previous$active))
+        if (length(common) > 0) {
+          state$active[common] <- previous$active[common]
+        }
+        if (!is.null(previous$global_scale)) {
+          state$global_scale <- previous$global_scale
+        }
+        state$log_global <- previous$log_global
+        state$log_local <- previous$log_local
+        refresh_state(state)
+      }
+
+      apply_entry <- function(state, entry) {
+        if (is.null(entry)) {
+          return(refresh_state(state))
+        }
+        if (is.logical(entry) || is.numeric(entry)) {
+          if (length(entry) != length(state$active)) {
+            stop("Horseshoe indicator has incorrect length")
+          }
+          state$active[] <- as.logical(entry)
+          return(refresh_state(state))
+        }
+        if (!is.list(entry)) {
+          stop("Horseshoe configuration must be logical, numeric, or list")
+        }
+        if (!is.null(entry$active)) {
+          if (length(entry$active) != length(state$active)) {
+            stop("Horseshoe indicator has incorrect length")
+          }
+          state$active[] <- as.logical(entry$active)
+        }
+        if (!is.null(entry$global_scale)) {
+          if (length(entry$global_scale) != 1) {
+            stop("Horseshoe global_scale must be a single numeric value")
+          }
+          if (!is.numeric(entry$global_scale) || entry$global_scale <= 0) {
+            stop("Horseshoe global_scale must be positive")
+          }
+          state$global_scale <- as.numeric(entry$global_scale)
+          state$log_global <- numeric(0)
+        }
+        state <- refresh_state(state)
+        if (!is.null(entry$log_global) && length(state$log_global) > 0) {
+          lg <- entry$log_global
+          if (length(lg) == 1 && is.numeric(lg)) {
+            state$log_global[] <- as.numeric(lg)
+          } else if (!is.null(names(lg)) && state$global_name %in% names(lg)) {
+            state$log_global[] <- as.numeric(lg[[state$global_name]])
+          } else {
+            stop("Horseshoe log_global must be a single numeric value")
+          }
+        } else if (!is.null(entry$log_global) && length(state$log_global) == 0) {
+          stop("Cannot set horseshoe log_global when no coefficients are flagged")
+        }
+        if (!is.null(entry$log_local)) {
+          if (length(state$log_local) == 0) {
+            if (length(entry$log_local) > 0) {
+              stop("Cannot set horseshoe log_local when no coefficients are flagged")
+            }
+          } else {
+            assign_local <- state$log_local
+            provided <- entry$log_local
+            if (!is.null(names(provided))) {
+              local_names <- names(assign_local)
+              common <- intersect(local_names, names(provided))
+              if (length(common) != length(provided)) {
+                stop("Horseshoe log_local names must match active coefficients")
+              }
+              assign_local[match(common, local_names)] <- as.numeric(provided[common])
+            } else {
+              if (length(provided) != length(assign_local)) {
+                stop("Length of horseshoe log_local must match number of active coefficients")
+              }
+              assign_local[] <- as.numeric(provided)
+            }
+            state$log_local <- assign_local
+          }
+        }
+        state
+      }
+
+      obs_names <- get_coef_names(fe$obs)
+      hid_names <- get_coef_names(fe$hid)
+      prev_hs <- private$horseshoe_
+      horseshoe_spec <- if (!is.null(new_priors$horseshoe)) new_priors$horseshoe else list()
+
+      obs_state <- make_default_state(obs_names, "obs")
+      obs_state <- restore_state(obs_state, if (!is.null(prev_hs)) prev_hs$obs else NULL)
+      obs_state <- apply_entry(obs_state, horseshoe_spec$coeff_fe_obs)
+
+      hid_state <- make_default_state(hid_names, "hid")
+      hid_state <- restore_state(hid_state, if (!is.null(prev_hs)) prev_hs$hid else NULL)
+      hid_state <- apply_entry(hid_state, horseshoe_spec$coeff_fe_hid)
+
       # Name rows and columns for readability
       rownames(coeff_fe_obs_prior) <- rownames(fe$obs)
       rownames(coeff_fe_hid_prior) <- rownames(fe$hid)
@@ -389,21 +570,27 @@ HMM <- R6Class(
       colnames(coeff_fe_hid_prior) <- c("mean", "sd")
       colnames(log_lambda_obs_prior) <- c("mean", "sd")
       colnames(log_lambda_hid_prior) <- c("mean", "sd")
-      
-      private$priors_ <- list(coeff_fe_obs = coeff_fe_obs_prior, 
-                              coeff_fe_hid = coeff_fe_hid_prior, 
-                              log_lambda_obs = log_lambda_obs_prior, 
+
+      private$priors_ <- list(coeff_fe_obs = coeff_fe_obs_prior,
+                              coeff_fe_hid = coeff_fe_hid_prior,
+                              log_lambda_obs = log_lambda_obs_prior,
                               log_lambda_hid = log_lambda_hid_prior)
+      private$horseshoe_ <- list(obs = obs_state, hid = hid_state)
       # Setup if necessary
       if(!is.null(private$tmb_obj_)) {
         self$setup(silent = TRUE)
       }
-    }, 
+    },
     
-    #' @description Extract stored priors 
+    #' @description Extract stored priors
     priors = function() {
       return(private$priors_)
-    }, 
+    },
+
+    #' @description Horseshoe configuration for fixed effects
+    horseshoe = function() {
+      return(private$horseshoe_)
+    },
     
     #' @description Iterations from stan MCMC fit 
     #' 
@@ -554,9 +741,24 @@ HMM <- R6Class(
       ldelta0 <- self$hid()$delta0(log = TRUE, as_matrix = FALSE)
       
       # Setup TMB parameters
+      hs <- self$horseshoe()
+      if (is.null(hs)) {
+        obs_len <- length(self$obs()$coeff_fe())
+        hid_len <- length(self$hid()$coeff_fe())
+        hs <- list(
+          obs = list(log_global = numeric(0), log_local = numeric(0),
+                     active = rep(FALSE, obs_len), global_scale = 1),
+          hid = list(log_global = numeric(0), log_local = numeric(0),
+                     active = rep(FALSE, hid_len), global_scale = 1)
+        )
+      }
       tmb_par <- list(coeff_fe_obs = self$obs()$coeff_fe(),
+                      log_hs_global_obs = hs$obs$log_global,
+                      log_hs_local_obs = hs$obs$log_local,
                       log_lambda_obs = 0,
                       coeff_fe_hid = self$hid()$coeff_fe(),
+                      log_hs_global_hid = hs$hid$log_global,
+                      log_hs_local_hid = hs$hid$log_local,
                       log_lambda_hid = 0,
                       log_delta0 = ldelta0,
                       coeff_re_obs = 0,
@@ -607,7 +809,7 @@ HMM <- R6Class(
       # are estimated and which are not (used e.g. in post_coeff)
       fixpar <- c(self$hid()$fixpar(all = TRUE), self$obs()$fixpar(all = TRUE))
       par_list <- self$coeff_list()
-      usernms <- c("obs", "lambda_obs", "hid", "lambda_hid", "delta0", NA, NA)
+      usernms <- c("obs", NA, NA, "lambda_obs", "hid", NA, NA, "lambda_hid", "delta0", NA, NA)
       par_names <- names(par_list)
       fixpar_vec <- NULL
       # Loop over model components
@@ -655,7 +857,8 @@ HMM <- R6Class(
       statdist <- ifelse(self$hid()$stationary(), yes = 1, no = 0)
       
       # Get stored priors 
-      priors <- self$priors() 
+      priors <- self$priors()
+      hs_dat <- hs
       
       # Get variables for observation distributions
       obsvar <- self$obs()$obs_var(expand = TRUE)
@@ -684,8 +887,12 @@ HMM <- R6Class(
                       ref_tpm = self$hid()$ref(),
                       coeff_fe_obs_prior = priors$coeff_fe_obs, 
                       coeff_fe_hid_prior = priors$coeff_fe_hid, 
-                      log_lambda_obs_prior = priors$log_lambda_obs, 
-                      log_lambda_hid_prior = priors$log_lambda_hid)
+                      log_lambda_obs_prior = priors$log_lambda_obs,
+                      log_lambda_hid_prior = priors$log_lambda_hid,
+                      hs_obs_active = as.integer(hs_dat$obs$active),
+                      hs_hid_active = as.integer(hs_dat$hid$active),
+                      hs_obs_scale = hs_dat$obs$global_scale,
+                      hs_hid_scale = hs_dat$hid$global_scale)
       
       # Create TMB model
       obj <- MakeADFun(tmb_dat, tmb_par, DLL = "hmmTMB", 
@@ -1989,8 +2196,9 @@ HMM <- R6Class(
     tmb_obj_ = NULL,
     tmb_obj_joint_ = NULL,
     tmb_rep_ = NULL,
-    priors_ = NULL, 
-    out_stan_ = NULL, 
+    priors_ = NULL,
+    horseshoe_ = NULL,
+    out_stan_ = NULL,
     iters_= NULL,
     par_iters_ = NULL, 
     coeff_array_ = NULL,
