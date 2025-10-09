@@ -269,6 +269,7 @@
        }
      }
    }
+   
    // smoothing parameters for hidden 
    if (ncol_re_hid(0, 0) > -1) {
      for (int i = 0; i < log_lambda_hid.size(); ++i) {

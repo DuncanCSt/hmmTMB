@@ -561,12 +561,27 @@ HMM <- R6Class(
                       log_lambda_hid = 0,
                       log_delta0 = ldelta0,
                       coeff_re_obs = 0,
-                      coeff_re_hid = 0)
+                      coeff_re_hid = 0,
+                      log_hs_local_obs = rep(0, length(self$obs()$coeff_fe())),
+                      log_hs_global_obs = 0,
+                      log_hs_local_hid = rep(0, length(self$hid()$coeff_fe())),
+                      log_hs_global_hid = 0
+                      )
       
       # Initialise vectors of fixed parameters and random effects
       map <- NULL
       random <- NULL
       
+      # Drop horseshoe parameters when the prior is disabled
+      if (self$obs()$horseshoe() == 0) {
+        map <- c(map, list(log_hs_local_obs = factor(rep(NA, length(tmb_par$log_hs_local_obs))),
+                           log_hs_global_obs = factor(NA)))
+      }
+      if (self$hid()$horseshoe() == 0) {
+        map <- c(map, list(log_hs_local_hid = factor(rep(NA, length(tmb_par$log_hs_local_hid))),
+                           log_hs_global_hid = factor(NA)))
+      }
+
       # Setup random effects in observation model
       if(is.null(S_obs)) {
         # If there are no random effects, 
@@ -681,7 +696,9 @@ HMM <- R6Class(
                       S_hid = as_sparse(S_hid),
                       log_det_S_hid = log_det_S_hid,
                       ncol_re_hid = ncol_re_hid,
-                      include_smooths = 1, 
+                      include_smooths = 1,
+                      apply_horseshoe_obs = self$obs()$horseshoe(),
+                      apply_horseshoe_hid = self$hid()$horseshoe(),
                       ref_tpm = self$hid()$ref(),
                       coeff_fe_obs_prior = priors$coeff_fe_obs, 
                       coeff_fe_hid_prior = priors$coeff_fe_hid, 

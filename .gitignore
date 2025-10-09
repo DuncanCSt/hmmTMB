@@ -45,3 +45,14 @@ src/*.o
 
 # cache files for vignettes
 vignettes/hmmTMB_vignette_cache/*
+
+# Duncan's local development files
+inst/devel/forecast_experiments.ipynb
+inst/devel/forecast_multivariate.ipynb
+inst/devel/forecast.ipynb
+inst/devel/forecast.pdf
+inst/devel/forecast_stock_example.ipynb
+inst/devel/double_obs.hmm
+inst/devel/true_mod.hmm
+inst/devel/forecast_mod.hmm
+inst/devel/single_obs.hmm

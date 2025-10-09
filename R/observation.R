@@ -41,6 +41,8 @@ Observation <- R6Class(
     #' Each element is a named vector of coefficients that should either be 
     #' fixed (if the corresponding element is set to NA) or estimated to a 
     #' common value (using integers or factor levels).
+    #' @param horseshoe Logical; set to TRUE to apply a horseshoe prior to the
+    #' observation fixed effects (default FALSE).
     #' @param gam_args Named list of arguments passed to \code{mgcv::gam()} in
     #' \code{Observation$make_mat()}, e.g., "knots". Use at your own risk.
     #' 
@@ -75,12 +77,14 @@ Observation <- R6Class(
                           n_states = NULL, 
                           par,
                           fixpar = NULL,
+                          horseshoe = FALSE,
                           gam_args = NULL) {
       private$check_args(data = data, 
                          dists = dists, 
                          n_states = n_states, 
                          par = par, 
-                         formulas = formulas)
+                         formulas = formulas,
+                         horseshoe = horseshoe)
       
       # Automatically detect the number of states from par
       if(is.null(n_states)) {
@@ -101,6 +105,7 @@ Observation <- R6Class(
       
       # Save user-specified arguments for mgcv::gam()
       private$gam_args_ <- gam_args
+      private$horseshoe_ <- as.integer(isTRUE(horseshoe))
       
       # Make sure there is an ID column in the data and it's a factor
       if(!("ID" %in% names(data))) {
@@ -474,6 +479,9 @@ Observation <- R6Class(
     
     #' @description Extra arguments for mgcv::gam (passed to make_matrices)
     gam_args = function() {return(private$gam_args_)},
+
+    #' @description Indicator (0/1) for applying horseshoe prior to observation fixed effects
+    horseshoe = function() {return(private$horseshoe_)},
     
     # Mutators ----------------------------------------------------------------
     
@@ -1016,10 +1024,11 @@ Observation <- R6Class(
     fixpar_ = NULL,
     empty_ = NULL,
     gam_args_ = NULL,
+    horseshoe_ = NULL,
     
     #' Check constructor arguments 
     # (For argument description, see constructor)
-    check_args = function(data, dists, n_states, par, formulas) {
+    check_args = function(data, dists, n_states, par, formulas, horseshoe) {
       if(!is.null(data)) {
         if(!inherits(data, "data.frame")) {
           stop("'data' should be a data.frame")
@@ -1065,6 +1074,10 @@ Observation <- R6Class(
         if(!all(names(formulas) %in% names(dists))) {
           stop("'formulas' should have the same names as 'dists'")
         }
+      }
+
+      if(!is.logical(horseshoe) || length(horseshoe) != 1 || is.na(horseshoe)) {
+        stop("'horseshoe' should be a single non-NA logical value")
       }
     }, 
     

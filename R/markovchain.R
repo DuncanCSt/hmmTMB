@@ -55,6 +55,8 @@ MarkovChain <- R6Class(
     #' the diagonal transition probabilities are used as references.
     #' @param gam_args Named list of arguments passed to \code{mgcv::gam()} in
     #' \code{MarkovChain$make_mat()}, e.g., "knots". Use at your own risk.
+    #' @param horseshoe Logical; set to TRUE to apply a horseshoe prior to the
+    #' hidden-state fixed effects (default FALSE).
     #' 
     #' @return A new MarkovChain object
     #' 
@@ -85,11 +87,13 @@ MarkovChain <- R6Class(
                           initial_state = "estimated",
                           fixpar = NULL,
                           ref = 1:n_states,
+                          horseshoe = FALSE,
                           gam_args = NULL) {
       # Check arguments
       private$check_args(n_states = n_states, 
                          formula = formula, 
-                         data = data)
+                         data = data,
+                         horseshoe = horseshoe)
       private$nstates_ <- n_states
       private$ref_ <- ref
       
@@ -106,6 +110,7 @@ MarkovChain <- R6Class(
       
       # Save user-specified arguments for mgcv::gam()
       private$gam_args_ <- gam_args
+      private$horseshoe_ <- as.integer(isTRUE(horseshoe))
       
       # Matrix with 1 for reference element and 0 elsewhere
       # (used later to select relevant entries of tpm)
@@ -414,6 +419,9 @@ MarkovChain <- R6Class(
     
     #' @description Extra arguments for mgcv::gam (passed to make_matrices)
     gam_args = function() {return(private$gam_args_)},
+    
+    #' @description Indicator (0/1) for applying horseshoe prior to hidden-state fixed effects
+    horseshoe = function() {return(private$horseshoe_)},
     
     # Mutators ----------------------------------------------------------------
     
@@ -733,6 +741,7 @@ MarkovChain <- R6Class(
     initial_state_ = NULL,
     empty_ = NULL,
     gam_args_ = NULL,
+    horseshoe_ = NULL,
     
     # Setup fixed parameters
     setup_fixpar = function() {
@@ -765,7 +774,7 @@ MarkovChain <- R6Class(
     
     # Check constructor arguments
     # (For argument description, see constructor)
-    check_args = function(n_states, formula, data) {
+    check_args = function(n_states, formula, data, horseshoe) {
       if(!is.null(n_states)) {
         if(!is.numeric(n_states) | n_states < 1) {
           stop("'n_states' should be a numeric >= 1")
@@ -795,6 +804,10 @@ MarkovChain <- R6Class(
         if(!inherits(data, "data.frame")) {
           stop("'data' should be a data.frame")
         }
+      }
+
+      if(!is.logical(horseshoe) || length(horseshoe) != 1 || is.na(horseshoe)) {
+        stop("'horseshoe' should be a single non-NA logical value")
       }
     }
   )
