@@ -34,8 +34,10 @@
    DATA_VECTOR(log_det_S_hid); // log-determinant of penalty matrix
    DATA_IMATRIX(ncol_re_hid); // number of columns of S and X_re for each random effect
    DATA_INTEGER(include_smooths); // > 0 = include penalty in likelihood evaluation
-   DATA_INTEGER(apply_horshoe_obs); // > 0 = apply horseshoe prior to fixed effects for observation process
-   DATA_INTEGER(apply_horshoe_hid); // > 0 = apply horseshoe prior to fixed effects for hidden state process
+   DATA_INTEGER(apply_horseshoe_obs); // > 0 = apply horseshoe prior to fixed effects for observation process
+   DATA_INTEGER(apply_horseshoe_hid); // > 0 = apply horseshoe prior to fixed effects for hidden state process
+   DATA_IVECTOR(obs_intercept_idx); // indices of observation intercepts
+   DATA_IVECTOR(hid_intercept_idx); // indices of hidden state intercepts
    DATA_IVECTOR(ref_tpm); // indices of reference transition probabilities
    // prior information 
    DATA_MATRIX(coeff_fe_obs_prior); // means, sds for prior on fixed effects for obs 
@@ -200,28 +202,26 @@
    //======================//
    Type llk = 0; 
    // fixed effects for observation
-   if (apply_horshoe_obs > 0) {
+   if (apply_horseshoe_obs > 0) {
     // convert to natural scale from working scale
-    Vector<Type> hs_local_obs = exp(log_hs_local_obs);
-    Vector<Type> hs_global_obs = exp(log_hs_global_obs);
+    vector<Type> hs_local_obs = exp(log_hs_local_obs);
+    vector<Type> hs_global_obs = exp(log_hs_global_obs);
     
     // Compute likelihood of the parameters under the horseshoe prior
     for (int i = 0; i < hs_local_obs.size(); ++i) {
-      llk += dnorm(coeff_fe_obs(i), Type(0), hs_global_obs(0)*hs_local_obs(i), 1.0);
-    }
-    // Add priors for local shrinkage parameters
-    for (int i = 0; i < hs_local_obs.size(); ++i) {
-      if (!R_IsNa(asDouble(hs_local_obs(i)))) {
-        // Cauchy(0, 1) prior using t-distribution implementation
-        llk += dt(hs_local_obs(i), Type(1), true);
+      // Only apply horseshoe prior if not an intercept term
+      if (!(obs_intercept_idx.array() == i).any()) {
+        llk += dnorm(coeff_fe_obs(i), Type(0), hs_global_obs(0)*hs_local_obs(i), 1.0);
+        // local shrinkage is drawn from half Cauchy(0, 1), implemented via t-distribution
+        llk += log(Type(2)) + dt(hs_local_obs(i), Type(1), true);
       }
     }
     // Add prior for global shrinkage parameter
-    if (!R_IsNa(asDouble(hs_global_obs(0)))) {
+    if (!R_IsNA(asDouble(hs_global_obs(0)))) {
       // TODO: Global shrinkage should be hyper parameter found via plug-in method
       // which is discussed here: https://avehtari.github.io/modelselection/regularizedhorseshoe_slides.pdf
       // Cauchy(0, 1) prior using t-distribution
-      llk += dt(hs_global_obs(0), Type(1), true);
+      // llk += dt(hs_global_obs(0), Type(1), true);
     }
    } else {
      // local shrinkage parameters for obs
@@ -232,26 +232,25 @@
      }
    }
    // fixed effects for hidden
-   if (apply_horshoe_hid > 0) {
+   if (apply_horseshoe_hid > 0) {
     // convert to natural scale from working scale
-    Vector<Type> hs_local_hid = exp(log_hs_local_hid);
-    Vector<Type> hs_global_hid = exp(log_hs_global_hid);
+    vector<Type> hs_local_hid = exp(log_hs_local_hid);
+    vector<Type> hs_global_hid = exp(log_hs_global_hid);
 
     // Compute likelihood of the parameters under the horseshoe prior
     for (int i = 0; i < hs_local_hid.size(); ++i) {
-      llk += dnorm(coeff_fe_hid(i), Type(0), hs_global_hid(0)*hs_local_hid(i), 1.0);
-    }
-    // Add priors for local shrinkage parameters
-    for (int i = 0; i < hs_local_hid.size(); ++i) {
-      if (!R_IsNa(asDouble(hs_local_hid(i)))) {
-        // Cauchy(0, 1) prior using t-distribution implementation
-        llk += dt(hs_local_hid(i), Type(1), true);
+      // Only apply horseshoe prior if not an intercept term
+      if (!(hid_intercept_idx.array() == i).any()) {
+        // Prior is drawn from Normal(0, global*local)
+        llk += dnorm(coeff_fe_hid(i), Type(0), 2500*hs_local_hid(i), 1.0);
+        // local shrinkage is drawn from half Cauchy(0, 1), implemented via t-distribution
+        llk += log(Type(2)) + dt(hs_local_hid(i), Type(1), true);
       }
     }
     // Add prior for global shrinkage parameter
-    if (!R_IsNa(asDouble(hs_global_hid(0)))) {
+    if (!R_IsNA(asDouble(hs_global_hid(0)))) {
       // Cauchy(0, 1) prior using t-distribution
-      llk += dt(hs_global_hid(0), Type(1), true);
+      // llk += dt(hs_global_hid(0), Type(1), true);
     }
    } else {
     // fixed effects for hidden  

@@ -576,10 +576,16 @@ HMM <- R6Class(
       if (self$obs()$horseshoe() == 0) {
         map <- c(map, list(log_hs_local_obs = factor(rep(NA, length(tmb_par$log_hs_local_obs))),
                            log_hs_global_obs = factor(NA)))
+      } else {
+        # If horseshoe prior is used, add horseshoe parameters to random effects
+        #random <- c(random, "log_hs_local_obs", "log_hs_global_obs")
       }
       if (self$hid()$horseshoe() == 0) {
         map <- c(map, list(log_hs_local_hid = factor(rep(NA, length(tmb_par$log_hs_local_hid))),
                            log_hs_global_hid = factor(NA)))
+      } else {
+        # If horseshoe prior is used, add horseshoe parameters to random effects
+        #random <- c(random, "log_hs_local_hid", "log_hs_global_hid")
       }
 
       # Setup random effects in observation model
@@ -699,6 +705,8 @@ HMM <- R6Class(
                       include_smooths = 1,
                       apply_horseshoe_obs = self$obs()$horseshoe(),
                       apply_horseshoe_hid = self$hid()$horseshoe(),
+                      obs_intercept_idx = grep('Intercept', rownames(self$obs()$coeff_fe())) - 1L,
+                      hid_intercept_idx = grep('Intercept', rownames(self$hid()$coeff_fe())) - 1L,
                       ref_tpm = self$hid()$ref(),
                       coeff_fe_obs_prior = priors$coeff_fe_obs, 
                       coeff_fe_hid_prior = priors$coeff_fe_hid, 
@@ -741,7 +749,7 @@ HMM <- R6Class(
     #' @param silent Logical. If FALSE, all tracing outputs are shown (default).
     fit_stan = function(..., silent = FALSE) {
       self$formulation()
-      
+      args <- list(...)
       if (!requireNamespace("rstan", quietly = TRUE)) {
         stop("You need to install the package rstan to do this")
       }
@@ -775,7 +783,7 @@ HMM <- R6Class(
       colnames(iters) <- rownames(self$coeff_array())
       # Fill non-fixed columns with posterior samples
       # Do I need to account for shared parameter values? See post_coeff
-      iters[,which(!is.na(self$coeff_array()[,"fixed"]))] <- post
+      iters[,which(!is.na(self$coeff_array()[,"fixed"]))] <- post[, 1:n_coeff]
       private$iters_ <- iters
       
       # Get iterations on response scale 
