@@ -791,9 +791,6 @@ compute_log_loss_traces <- function(
           y = dist_mat[, i],
           xout = true_vec[i]
         )$y
-        if (is.na(approx_val) || approx_val <= 0) {
-          return(NA_real_)
-        }
         -log(approx_val)
       }
     )

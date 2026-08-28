@@ -56,3 +56,17 @@ inst/devel/double_obs.hmm
 inst/devel/true_mod.hmm
 inst/devel/forecast_mod.hmm
 inst/devel/single_obs.hmm
+
+# macOS
+.DS_Store
+
+# Generated plot output from markets/horseshoe experiment runs
+inst/devel/TSX-covariates_no_horseshoe/
+inst/devel/cov_no_horseshoe_3s/
+inst/devel/cov_with_horseshoe_3s/
+inst/devel/cov_with_horseshoe_4s/
+inst/devel/covariates_with_horseshoe/
+inst/devel/covariates_with_horseshoe_4_states/
+inst/devel/covariates_without_horseshoe/
+inst/devel/tsx_only_plots/
+inst/devel/temp/
